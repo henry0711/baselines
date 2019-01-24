@@ -146,7 +146,7 @@ def symmetric_ema(xolds, yolds, low=None, high=None, n=512, decay_steps=1., low_
     ys[count_ys < low_counts_threshold] = np.nan
     return xs, ys, count_ys
 
-Result = namedtuple('Result', 'monitor progress dirname metadata')
+Result = namedtuple('Result', ['monitor', 'progress', 'dirname', 'metadata'])
 Result.__new__.__defaults__ = (None,) * len(Result._fields)
 
 def load_results(root_dir_or_dirs, enable_progress=True, enable_monitor=True, verbose=False):
@@ -245,7 +245,7 @@ def plot_results(
     figsize=None,
     legend_outside=False,
     resample=0,
-    smooth_step=1.0,
+    smooth_step=1.0
 ):
     '''
     Plot multiple Results objects
