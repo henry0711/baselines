@@ -6,6 +6,7 @@ import tensorflow as tf
 import tensorflow.contrib as tc
 
 from baselines import logger
+from baselines.common.tf_util import load_variables, save_variables
 from baselines.common.mpi_adam import MpiAdam
 import baselines.common.tf_util as U
 from baselines.common.mpi_running_mean_std import RunningMeanStd
@@ -178,7 +179,7 @@ class DDPG(object):
         logger.info('  actor params: {}'.format(actor_nb_params))
         self.actor_grads = U.flatgrad(self.actor_loss, self.actor.trainable_vars, clip_norm=self.clip_norm)
         self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
+            beta1=0.9, beta2=0.999, epsilon=1e-03)
 
     def setup_critic_optimizer(self):
         logger.info('setting up critic optimizer')
@@ -200,7 +201,7 @@ class DDPG(object):
         logger.info('  critic params: {}'.format(critic_nb_params))
         self.critic_grads = U.flatgrad(self.critic_loss, self.critic.trainable_vars, clip_norm=self.clip_norm)
         self.critic_optimizer = MpiAdam(var_list=self.critic.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
+            beta1=0.9, beta2=0.999, epsilon=1e-03)
 
     def setup_popart(self):
         # See https://arxiv.org/pdf/1602.07714.pdf for details.
@@ -399,3 +400,9 @@ class DDPG(object):
             self.sess.run(self.perturb_policy_ops, feed_dict={
                 self.param_noise_stddev: self.param_noise.current_stddev,
             })
+            
+    def save(self, path):
+        save_variables(path)
+            
+    def load(self, path):
+        load_variables(path)

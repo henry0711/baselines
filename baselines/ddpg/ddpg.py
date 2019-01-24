@@ -1,5 +1,6 @@
 import os
 import time
+from copy import copy, deepcopy
 from collections import deque
 import pickle
 
@@ -42,6 +43,7 @@ def learn(network, env,
           tau=0.01,
           eval_env=None,
           param_noise_adaption_interval=50,
+          save_path=None,
           **network_kwargs):
 
     set_global_seeds(seed)
@@ -59,8 +61,11 @@ def learn(network, env,
 
     nb_actions = env.action_space.shape[-1]
     assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
+    
+    logger.info("Action_shape:", env.action_space.shape, "| Observation_shape:", env.observation_space.shape)
+    logger.info("Save_path:", save_path)
 
-    memory = Memory(limit=int(1e6), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+    memory = Memory(limit=int(1e4), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
     critic = Critic(network=network, **network_kwargs)
     actor = Actor(nb_actions, network=network, **network_kwargs)
 
@@ -104,33 +109,42 @@ def learn(network, env,
     agent.reset()
 
     obs = env.reset()
+    eval_env = copy(env)
     if eval_env is not None:
         eval_obs = eval_env.reset()
     nenvs = obs.shape[0]
+    nenvs_eval = eval_obs.shape[0]
 
     episode_reward = np.zeros(nenvs, dtype = np.float32) #vector
     episode_step = np.zeros(nenvs, dtype = int) # vector
+    eval_episode_reward = np.zeros(nenvs_eval, dtype = np.float32) #vector
     episodes = 0 #scalar
     t = 0 # scalar
 
     epoch = 0
 
 
-
     start_time = time.time()
-
-    epoch_episode_rewards = []
-    epoch_episode_steps = []
-    epoch_actions = []
-    epoch_qs = []
-    epoch_episodes = 0
+    
     for epoch in range(nb_epochs):
+        epoch_episode_rewards = []
+        epoch_episode_steps = []
+        epoch_actions = []
+        epoch_qs = []
+        epoch_tds = []
+        epoch_actor_losses = []
+        epoch_critic_losses = []
+        epoch_adaptive_distances = []
+        eval_episode_rewards = []
+        eval_qs = []
+        epoch_episodes = 0
         for cycle in range(nb_epoch_cycles):
             # Perform rollouts.
             if nenvs > 1:
                 # if simulating multiple envs in parallel, impossible to reset agent at the end of the episode in each
                 # of the environments, so resetting here instead
                 agent.reset()
+            #logger.info("Rollout...")
             for t_rollout in range(nb_rollout_steps):
                 # Predict next action.
                 action, q, _, _ = agent.step(obs, apply_noise=True, compute_Q=True)
@@ -172,9 +186,8 @@ def learn(network, env,
 
 
             # Train.
-            epoch_actor_losses = []
-            epoch_critic_losses = []
-            epoch_adaptive_distances = []
+            #logger.info("Training...")
+            train_start_time = time.time()
             for t_train in range(nb_train_steps):
                 # Adapt param noise, if necessary.
                 if memory.nb_entries >= batch_size and t_train % param_noise_adaption_interval == 0:
@@ -185,13 +198,11 @@ def learn(network, env,
                 epoch_critic_losses.append(cl)
                 epoch_actor_losses.append(al)
                 agent.update_target_net()
+            epoch_tds.append(time.time() - train_start_time)
 
             # Evaluate.
-            eval_episode_rewards = []
-            eval_qs = []
             if eval_env is not None:
-                nenvs_eval = eval_obs.shape[0]
-                eval_episode_reward = np.zeros(nenvs_eval, dtype = np.float32)
+                #logger.info("Evaluating...")
                 for t_rollout in range(nb_eval_steps):
                     eval_action, eval_q, _, _ = agent.step(eval_obs, apply_noise=False, compute_Q=True)
                     eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
@@ -224,6 +235,7 @@ def learn(network, env,
         combined_stats['train/loss_actor'] = np.mean(epoch_actor_losses)
         combined_stats['train/loss_critic'] = np.mean(epoch_critic_losses)
         combined_stats['train/param_noise_distance'] = np.mean(epoch_adaptive_distances)
+        combined_stats['train/duration'] = np.mean(epoch_tds)
         combined_stats['total/duration'] = duration
         combined_stats['total/steps_per_second'] = float(t) / float(duration)
         combined_stats['total/episodes'] = episodes
@@ -231,9 +243,9 @@ def learn(network, env,
         combined_stats['rollout/actions_std'] = np.std(epoch_actions)
         # Evaluation statistics.
         if eval_env is not None:
-            combined_stats['eval/return'] = eval_episode_rewards
+            combined_stats['eval/return'] = np.mean(eval_episode_rewards)
             combined_stats['eval/return_history'] = np.mean(eval_episode_rewards_history)
-            combined_stats['eval/Q'] = eval_qs
+            combined_stats['eval/Q'] = np.mean(eval_qs)
             combined_stats['eval/episodes'] = len(eval_episode_rewards)
         def as_scalar(x):
             if isinstance(x, np.ndarray):
@@ -259,6 +271,8 @@ def learn(network, env,
 
         if rank == 0:
             logger.dump_tabular()
+        if rank == 0 and save_path is not None:
+            agent.save(os.path.expanduser(save_path))
         logger.info('')
         logdir = logger.get_dir()
         if rank == 0 and logdir:
