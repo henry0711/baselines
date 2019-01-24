@@ -2,6 +2,7 @@ import sys
 import multiprocessing
 import os.path as osp
 import gym
+import theo_env
 from collections import defaultdict
 import tensorflow as tf
 import numpy as np
@@ -50,10 +51,13 @@ _game_envs['retro'] = {
     'SpaceInvaders-Snes',
 }
 
+_game_envs['custom_type']={'Theo-v0'}
+
 
 def train(args, extra_args):
     env_type, env_id = get_env_type(args.env)
     print('env_type: {}'.format(env_type))
+    logger.info("Env_ID:", env_id)
 
     total_timesteps = int(args.num_timesteps)
     seed = args.seed
@@ -71,8 +75,11 @@ def train(args, extra_args):
     else:
         if alg_kwargs.get('network') is None:
             alg_kwargs['network'] = get_default_network(env_type)
+        
+    if args.save_path:
+        alg_kwargs['save_path'] = args.save_path
 
-    print('Training {} on {}:{} with arguments \n{}'.format(args.alg, env_type, env_id, alg_kwargs))
+    logger.info('Training {} on {}:{} with arguments \n{}'.format(args.alg, env_type, env_id, alg_kwargs))
 
     model = learn(
         env=env,
@@ -188,12 +195,15 @@ def main(args):
     args, unknown_args = arg_parser.parse_known_args(args)
     extra_args = parse_cmdline_kwargs(unknown_args)
 
+
     if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
         rank = 0
         logger.configure()
     else:
         logger.configure(format_strs=[])
         rank = MPI.COMM_WORLD.Get_rank()
+        
+    logger.info(" Args:", args, "\n Extra", extra_args, "\n Unknown:", unknown_args)
 
     model, env = train(args, extra_args)
     env.close()
@@ -206,17 +216,24 @@ def main(args):
         logger.log("Running trained model")
         env = build_env(args)
         obs = env.reset()
+        max_action = env.action_space.high
         def initialize_placeholders(nlstm=128,**kwargs):
             return np.zeros((args.num_env or 1, 2*nlstm)), np.zeros((1))
         state, dones = initialize_placeholders(**extra_args)
+        distance = 0.0
         while True:
-            actions, _, state, _ = model.step(obs,S=state, M=dones)
-            obs, _, done, _ = env.step(actions)
+            actions, _, state, _ = model.step(obs, apply_noise=False)
+            actions = actions*max_action
+            obs, reward, done, _ = env.step(actions)
+            print("Steering:", actions)
+            distance += reward
             env.render()
             done = done.any() if isinstance(done, np.ndarray) else done
 
             if done:
+                print("Done. Distance:", distance)
                 obs = env.reset()
+                distance = 0.0
 
         env.close()
 
