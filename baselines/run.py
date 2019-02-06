@@ -52,6 +52,11 @@ _game_envs['retro'] = {
 }
 
 _game_envs['custom_type']={'Theo-v0'}
+_game_envs['custom_type']={'TheoLimited-v0'}
+_game_envs['custom_type']={'TheoSteer-v0'}
+_game_envs['custom_type']={'TheoSteer-v1'}
+_game_envs['custom_type']={'TheoSteer-v2'}
+_game_envs['custom_type']={'TheoSteer2-v0'}
 
 
 def train(args, extra_args):
@@ -70,6 +75,10 @@ def train(args, extra_args):
     if args.save_video_interval != 0:
         env = VecVideoRecorder(env, osp.join(logger.Logger.CURRENT.dir, "videos"), record_video_trigger=lambda x: x % args.save_video_interval == 0, video_length=args.save_video_length)
 
+    eval_env = None
+    if not args.play:
+        eval_env = build_env(args, eval_env=True)
+
     if args.network:
         alg_kwargs['network'] = args.network
     else:
@@ -85,13 +94,14 @@ def train(args, extra_args):
         env=env,
         seed=seed,
         total_timesteps=total_timesteps,
+        eval_env=eval_env,
         **alg_kwargs
     )
 
     return model, env
 
 
-def build_env(args):
+def build_env(args, eval_env=False):
     ncpu = multiprocessing.cpu_count()
     if sys.platform == 'darwin': ncpu //= 2
     nenv = args.num_env or ncpu
@@ -117,7 +127,7 @@ def build_env(args):
        config.gpu_options.allow_growth = True
        get_session(config=config)
 
-       env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale)
+       env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale, eval_env=eval_env)
 
        if env_type == 'mujoco':
            env = VecNormalize(env)
@@ -221,19 +231,32 @@ def main(args):
             return np.zeros((args.num_env or 1, 2*nlstm)), np.zeros((1))
         state, dones = initialize_placeholders(**extra_args)
         distance = 0.0
+        acc_reward = 0.0
+        actions_hist = []
         while True:
-            actions, _, state, _ = model.step(obs, apply_noise=False)
-            actions = actions*max_action
-            obs, reward, done, _ = env.step(actions)
-            print("Steering:", actions)
-            distance += reward
+            actions, q, state, _ = model.step(obs, apply_noise=False, compute_Q=True)
+            scaled_actions = max_action * actions
+            print("{0:7.2f}".format(np.asscalar(scaled_actions)), end='', flush=True)
+            obs, reward, done, info = env.step(max_action * actions)
+            acc_reward += reward
+            if "distance" in info[0].keys():
+                distance += info[0]["distance"]
+            else:
+                distance += reward
+            actions_hist.append(actions)
             env.render()
             done = done.any() if isinstance(done, np.ndarray) else done
+            sys.stdout.write('\b\b\b\b\b\b\b       \b\b\b\b\b\b\b')
 
             if done:
-                print("Done. Distance:", distance)
+                penalty = distance - acc_reward
+                print("")
+                print("Done. Distance: {0:7.2f}, Reward: {1:7.2f}, Penalty: {2:7.2f}".format(distance, np.asscalar(acc_reward), np.asscalar(penalty)))
+                print("      Actions: Mean: {0:5.2f}, Std_Dev: {1:5.2f}".format(np.mean(actions_hist), np.std(actions_hist)))
                 obs = env.reset()
                 distance = 0.0
+                acc_reward = 0.0
+                actions_hist = []
 
         env.close()
 

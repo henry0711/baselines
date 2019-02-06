@@ -68,7 +68,7 @@ class DDPG(object):
     def __init__(self, actor, critic, memory, observation_shape, action_shape, param_noise=None, action_noise=None,
         gamma=0.99, tau=0.001, normalize_returns=False, enable_popart=False, normalize_observations=True,
         batch_size=128, observation_range=(-5., 5.), action_range=(-1., 1.), return_range=(-np.inf, np.inf),
-        critic_l2_reg=0., actor_lr=1e-4, critic_lr=1e-3, clip_norm=None, reward_scale=1.):
+        critic_l2_reg=0., actor_lr=1e-4, critic_lr=1e-3, clip_norm=None, reward_scale=1., epsilon=1e-3):
         # Inputs.
         self.obs0 = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs0')
         self.obs1 = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs1')
@@ -99,6 +99,7 @@ class DDPG(object):
         self.batch_size = batch_size
         self.stats_sample = None
         self.critic_l2_reg = critic_l2_reg
+        self.epsilon = epsilon
 
         # Observation normalization.
         if self.normalize_observations:
@@ -146,6 +147,11 @@ class DDPG(object):
         self.setup_target_network_updates()
 
         self.initial_state = None # recurrent architectures not supported yet
+        
+        #TF summaries (TF Board)
+        tf.summary.scalar("Actor_Loss", self.actor_loss)
+        tf.summary.scalar("Critic_Loss", self.critic_loss)
+        self.summary_op = tf.summary.merge_all()
 
     def setup_target_network_updates(self):
         actor_init_updates, actor_soft_updates = get_target_updates(self.actor.vars, self.target_actor.vars, self.tau)
@@ -179,7 +185,7 @@ class DDPG(object):
         logger.info('  actor params: {}'.format(actor_nb_params))
         self.actor_grads = U.flatgrad(self.actor_loss, self.actor.trainable_vars, clip_norm=self.clip_norm)
         self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-03)
+            beta1=0.9, beta2=0.999, epsilon=self.epsilon)
 
     def setup_critic_optimizer(self):
         logger.info('setting up critic optimizer')
@@ -201,7 +207,7 @@ class DDPG(object):
         logger.info('  critic params: {}'.format(critic_nb_params))
         self.critic_grads = U.flatgrad(self.critic_loss, self.critic.trainable_vars, clip_norm=self.clip_norm)
         self.critic_optimizer = MpiAdam(var_list=self.critic.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-03)
+            beta1=0.9, beta2=0.999, epsilon=self.epsilon)
 
     def setup_popart(self):
         # See https://arxiv.org/pdf/1602.07714.pdf for details.
@@ -320,8 +326,8 @@ class DDPG(object):
             })
 
         # Get all gradients and perform a synced update.
-        ops = [self.actor_grads, self.actor_loss, self.critic_grads, self.critic_loss]
-        actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(ops, feed_dict={
+        ops = [self.actor_grads, self.actor_loss, self.critic_grads, self.critic_loss, self.summary_op]
+        actor_grads, actor_loss, critic_grads, critic_loss, summary = self.sess.run(ops, feed_dict={
             self.obs0: batch['obs0'],
             self.actions: batch['actions'],
             self.critic_target: target_Q,
@@ -329,7 +335,7 @@ class DDPG(object):
         self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)
         self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr)
 
-        return critic_loss, actor_loss
+        return critic_loss, actor_loss, summary
 
     def initialize(self, sess):
         self.sess = sess

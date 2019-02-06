@@ -3,6 +3,7 @@ import time
 from copy import copy, deepcopy
 from collections import deque
 import pickle
+import tensorflow as tf
 
 from baselines.ddpg.ddpg_learner import DDPG
 from baselines.ddpg.models import Actor, Critic
@@ -34,6 +35,7 @@ def learn(network, env,
           critic_l2_reg=1e-2,
           actor_lr=1e-4,
           critic_lr=1e-3,
+          epsilon=1e-3,
           popart=False,
           gamma=0.99,
           clip_norm=None,
@@ -65,7 +67,7 @@ def learn(network, env,
     logger.info("Action_shape:", env.action_space.shape, "| Observation_shape:", env.observation_space.shape)
     logger.info("Save_path:", save_path)
 
-    memory = Memory(limit=int(1e4), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+    memory = Memory(limit=int(1e5), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
     critic = Critic(network=network, **network_kwargs)
     actor = Actor(nb_actions, network=network, **network_kwargs)
 
@@ -95,7 +97,7 @@ def learn(network, env,
         gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
         batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
         actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
-        reward_scale=reward_scale)
+        reward_scale=reward_scale, epsilon=epsilon)
     logger.info('Using agent with the following configuration:')
     logger.info(str(agent.__dict__.items()))
 
@@ -103,13 +105,18 @@ def learn(network, env,
     episode_rewards_history = deque(maxlen=100)
     sess = U.get_session()
     # Prepare everything.
+    
+    if save_path:
+        save_path = os.path.expanduser(save_path)
+        save_dir, save_base = os.path.split(save_path)
+        summary_writer = tf.summary.FileWriter(os.path.join(save_dir, "tf_summary"), sess.graph)
+        tf_saver = tf.train.Saver(write_version=tf.train.SaverDef.V2, max_to_keep=10)
+
     agent.initialize(sess)
     sess.graph.finalize()
-
     agent.reset()
 
     obs = env.reset()
-    eval_env = copy(env)
     if eval_env is not None:
         eval_obs = eval_env.reset()
     nenvs = obs.shape[0]
@@ -118,11 +125,11 @@ def learn(network, env,
     episode_reward = np.zeros(nenvs, dtype = np.float32) #vector
     episode_step = np.zeros(nenvs, dtype = int) # vector
     eval_episode_reward = np.zeros(nenvs_eval, dtype = np.float32) #vector
+    eval_best_reward = 0 #scalar
     episodes = 0 #scalar
     t = 0 # scalar
 
     epoch = 0
-
 
     start_time = time.time()
     
@@ -137,6 +144,7 @@ def learn(network, env,
         epoch_adaptive_distances = []
         eval_episode_rewards = []
         eval_qs = []
+        summaries = []
         epoch_episodes = 0
         for cycle in range(nb_epoch_cycles):
             # Perform rollouts.
@@ -194,10 +202,11 @@ def learn(network, env,
                     distance = agent.adapt_param_noise()
                     epoch_adaptive_distances.append(distance)
 
-                cl, al = agent.train()
+                cl, al, summary = agent.train()
                 epoch_critic_losses.append(cl)
                 epoch_actor_losses.append(al)
                 agent.update_target_net()
+                summaries.append(summary)
             epoch_tds.append(time.time() - train_start_time)
 
             # Evaluate.
@@ -272,7 +281,17 @@ def learn(network, env,
         if rank == 0:
             logger.dump_tabular()
         if rank == 0 and save_path is not None:
-            agent.save(os.path.expanduser(save_path))
+            agent.save(save_path)
+            for i in range(len(summaries)):
+                step = t + (i - len(summaries) +1) * nb_rollout_steps * nb_epoch_cycles / len(summaries)
+                summary_writer.add_summary(summaries[i], step)
+            summary_writer.flush()
+            tf_saver.save(sess, os.path.join(save_dir, "tf_checkpoints", save_base), global_step=t)
+            if np.mean(eval_episode_rewards) > eval_best_reward:
+                #Save the best agent separately
+                agent.save(save_path + ".best_" + str(t))
+                eval_best_reward = np.mean(eval_episode_rewards)
+                
         logger.info('')
         logdir = logger.get_dir()
         if rank == 0 and logdir:

@@ -18,7 +18,7 @@ from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 from baselines.common import retro_wrappers
 
-def make_vec_env(env_id, env_type, num_env, seed, wrapper_kwargs=None, start_index=0, reward_scale=1.0, gamestate=None):
+def make_vec_env(env_id, env_type, num_env, seed, wrapper_kwargs=None, start_index=0, reward_scale=1.0, gamestate=None, eval_env=False):
     """
     Create a wrapped, monitored SubprocVecEnv for Atari and MuJoCo.
     """
@@ -33,6 +33,7 @@ def make_vec_env(env_id, env_type, num_env, seed, wrapper_kwargs=None, start_ind
             seed=seed,
             reward_scale=reward_scale,
             gamestate=gamestate,
+            eval_env=eval_env,
             wrapper_kwargs=wrapper_kwargs
         )
 
@@ -43,7 +44,7 @@ def make_vec_env(env_id, env_type, num_env, seed, wrapper_kwargs=None, start_ind
         return DummyVecEnv([make_thunk(start_index)])
 
 
-def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate=None, wrapper_kwargs={}):
+def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate=None, eval_env=False, wrapper_kwargs={}):
     mpi_rank = MPI.COMM_WORLD.Get_rank() if MPI else 0
     if env_type == 'atari':
         env = make_atari(env_id)
@@ -55,8 +56,11 @@ def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate
         env = gym.make(env_id)
 
     env.seed(seed + subrank if seed is not None else None)
+    filename = logger.get_dir() and os.path.join(logger.get_dir(), str(mpi_rank) + '.' + str(subrank))
+    if eval_env:
+        filename = filename + ".eval"
     env = Monitor(env,
-                  logger.get_dir() and os.path.join(logger.get_dir(), str(mpi_rank) + '.' + str(subrank)),
+                  filename,
                   allow_early_resets=True)
 
     if env_type == 'atari':

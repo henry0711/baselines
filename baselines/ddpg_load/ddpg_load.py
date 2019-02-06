@@ -2,6 +2,7 @@ import os
 import time
 from collections import deque
 import pickle
+import tensorflow as tf
 
 from baselines.ddpg.ddpg_learner import DDPG
 from baselines.ddpg.models import Actor, Critic
@@ -17,6 +18,15 @@ try:
     from mpi4py import MPI
 except ImportError:
     MPI = None
+    
+def show_params():
+    total = 0
+    for v in tf.trainable_variables():
+        dims = v.get_shape().as_list()
+        num  = int(np.prod(dims))
+        total += num
+        print('  %s \t\t Num: %d \t\t Shape %s ' % (v.name, num, dims))
+    print('\nTotal number of params: %d' % total)
 
 def learn(network, env,
           seed=None,
@@ -30,13 +40,16 @@ def learn(network, env,
           critic_lr=1e-3,
           popart=False,
           gamma=0.99,
+          epsilon=1e-3,
           clip_norm=None,
           batch_size=64, # per MPI worker
           tau=0.01,
+          eval_env=None,
           load_path="/disk/vanishing_data/mheinric/baselines/ddpg/ddpg_2_64_1e5/test.ddpg",
           **network_kwargs):
 
     set_global_seeds(seed)
+    eval_env=None
 
     nb_actions = env.action_space.shape[-1]
     assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
@@ -70,14 +83,17 @@ def learn(network, env,
         gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
         batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
         actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
-        reward_scale=reward_scale)
+        reward_scale=reward_scale, epsilon=epsilon)
     logger.info('Using agent with the following configuration:')
     logger.info(str(agent.__dict__.items()))
     
     sess = U.get_session()
     # Prepare everything.
-    agent.load(load_path)
+    logger.info('Loading Network from:', load_path)
     agent.initialize(sess)
+    agent.load(load_path)
+    
+    show_params()
     
     sess.graph.finalize()
 
