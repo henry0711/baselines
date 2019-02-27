@@ -80,6 +80,21 @@ def cnn_small(**conv_kwargs):
     return network_fn
 
 
+@register("cnn_theo")
+def cnn_theo(**conv_kwargs):
+    def network_fn(X):
+        h = tf.cast(X, tf.float32)
+
+        activ = tf.nn.relu
+        h = activ(conv(h, 'c1', nf=8, rf=7, stride=2, init_scale=np.sqrt(2), **conv_kwargs))
+        h = activ(conv(h, 'c2', nf=16, rf=4, stride=2, init_scale=np.sqrt(2), **conv_kwargs))
+        h = activ(conv(h, 'c3', nf=32, rf=3, stride=2, init_scale=np.sqrt(2), **conv_kwargs))
+        h = conv_to_fc(h)
+        h = activ(fc(h, 'fc1', nh=64, init_scale=np.sqrt(2)))
+        return h
+    return network_fn
+
+
 @register("lstm")
 def lstm(nlstm=128, layer_norm=False):
     """

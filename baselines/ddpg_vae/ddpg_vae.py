@@ -1,12 +1,11 @@
 import os
 import time
-from copy import copy, deepcopy
 from collections import deque
 import pickle
 import tensorflow as tf
 
-from baselines.ddpg.ddpg_learner import DDPG
-from baselines.ddpg.models import Actor, Critic
+from baselines.ddpg_vae.ddpg_vae_learner import DDPG
+from baselines.ddpg_vae.models import Actor, Critic
 from baselines.ddpg.memory import Memory
 from baselines.ddpg.noise import AdaptiveParamNoiseSpec, NormalActionNoise, OrnsteinUhlenbeckActionNoise
 from baselines.common import set_global_seeds
@@ -38,6 +37,7 @@ def learn(network, env,
           epsilon=1e-3,
           popart=False,
           gamma=0.99,
+          latent_size=256,
           clip_norm=None,
           nb_train_steps=50, # per epoch cycle and MPI worker,
           nb_eval_steps=100,
@@ -68,7 +68,7 @@ def learn(network, env,
     logger.info("Action_shape:", env.action_space.shape, "| Observation_shape:", env.observation_space.shape)
     logger.info("Save_path:", save_path)
 
-    memory = Memory(limit=int(1e5), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+    memory = Memory(limit=int(1e4), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
     critic = Critic(network=network, **network_kwargs)
     actor = Actor(nb_actions, network=network, **network_kwargs)
 
@@ -87,7 +87,7 @@ def learn(network, env,
                 action_noise = NormalActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
             elif 'ou' in current_noise_type:
                 _, stddev = current_noise_type.split('_')
-                action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
+                action_noise = OrnsteinUhlenbeckAcionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
             else:
                 raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
 
