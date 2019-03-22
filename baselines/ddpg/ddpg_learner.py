@@ -362,7 +362,8 @@ class DDPG(object):
         stats = dict(zip(names, values))
 
         if self.param_noise is not None:
-            stats = {**stats, **self.param_noise.get_stats()}
+            #stats = {**stats, **self.param_noise.get_stats()}
+            stats.update(self.param_noise.get_stats())
 
         return stats
 

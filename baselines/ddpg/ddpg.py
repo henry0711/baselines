@@ -313,9 +313,9 @@ def learn(network, env,
     
     
 def load_agent(network,
-               seed=None,
                action_space_shape, #Tuple
                observation_space_shape, #Tuple
+               seed=None,
                reward_scale=1.0,
                noise_type='adaptive-param_0.2',
                normalize_returns=False,
