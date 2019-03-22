@@ -37,6 +37,7 @@ def learn(network, env,
           epsilon=1e-3,
           popart=False,
           gamma=0.99,
+          beta=1.0,
           latent_size=256,
           clip_norm=None,
           nb_train_steps=50, # per epoch cycle and MPI worker,
@@ -95,7 +96,7 @@ def learn(network, env,
     logger.info('scaling actions by {} before executing in env'.format(max_action))
 
     agent = DDPG(actor, critic, memory, env.observation_space.shape, env.action_space.shape,
-        gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
+        gamma=gamma, tau=tau, beta=beta, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
         batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
         actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
         reward_scale=reward_scale, epsilon=epsilon)

@@ -1,8 +1,10 @@
 import sys
 import multiprocessing
+import os
 import os.path as osp
 import gym
 import theo_env
+import csv
 from collections import defaultdict
 import tensorflow as tf
 import numpy as np
@@ -233,6 +235,14 @@ def main(args):
         distance = 0.0
         acc_reward = 0.0
         actions_hist = []
+        header = ["action", "scaled_action", "reward", "distance"]
+        logdir = os.environ["OPENAI_LOGDIR"]
+        reset = 0
+        logfile = osp.join(logdir, "test_run." + str(reset+1).zfill(2) + ".csv")
+        with open(logfile, 'w') as writeFile:
+            print("Writing log to", logfile)
+            writer = csv.writer(writeFile)
+            writer.writerow(header)
         while True:
             actions, q, state, _ = model.step(obs, apply_noise=False, compute_Q=True)
             scaled_actions = max_action * actions
@@ -243,17 +253,28 @@ def main(args):
                 distance += info[0]["distance"]
             else:
                 distance += reward
+                
+            csv_line = [actions.item(), scaled_actions.item(), reward.item(), info[0]["distance"]]
+            with open(logfile, 'a') as csvFile:
+                writer = csv.writer(csvFile)
+                writer.writerow(csv_line)
             actions_hist.append(actions)
-            env.render()
+            #env.render()
             done = done.any() if isinstance(done, np.ndarray) else done
             sys.stdout.write('\b\b\b\b\b\b\b       \b\b\b\b\b\b\b')
 
             if done:
+                reset += 1
                 penalty = distance - acc_reward
                 print("")
                 print("Done. Distance: {0:7.2f}, Reward: {1:7.2f}, Penalty: {2:7.2f}".format(distance, np.asscalar(acc_reward), np.asscalar(penalty)))
                 print("      Actions: Mean: {0:5.2f}, Std_Dev: {1:5.2f}".format(np.mean(actions_hist), np.std(actions_hist)))
                 obs = env.reset()
+                logfile = osp.join(logdir, "test_run." + str(reset+1).zfill(2) + ".csv")
+                with open(logfile, 'w') as writeFile:
+                    print("Writing log to", logfile)
+                    writer = csv.writer(writeFile)
+                    writer.writerow(header)
                 distance = 0.0
                 acc_reward = 0.0
                 actions_hist = []
