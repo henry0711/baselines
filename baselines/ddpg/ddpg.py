@@ -310,3 +310,71 @@ def learn(network, env,
 
 
     return agent
+    
+    
+def load_agent(network,
+               seed=None,
+               action_space_shape, #Tuple
+               observation_space_shape, #Tuple
+               reward_scale=1.0,
+               noise_type='adaptive-param_0.2',
+               normalize_returns=False,
+               normalize_observations=True,
+               critic_l2_reg=1e-2,
+               actor_lr=1e-4,
+               critic_lr=1e-3,
+               epsilon=1e-3,
+               popart=False,
+               gamma=0.99,
+               clip_norm=None,
+               batch_size=64, # per MPI worker
+               tau=0.01,
+               load_path=None,
+               **network_kwargs):
+    set_global_seeds(seed)
+
+    nb_actions = action_space_shape[-1]
+
+    memory = Memory(limit=int(1e5), action_shape=action_space_shape, observation_shape=observation_space_shape)
+    critic = Critic(network=network, **network_kwargs)
+    actor = Actor(nb_actions, network=network, **network_kwargs)
+
+    action_noise = None
+    param_noise = None
+    if noise_type is not None:
+        for current_noise_type in noise_type.split(','):
+            current_noise_type = current_noise_type.strip()
+            if current_noise_type == 'none':
+                pass
+            elif 'adaptive-param' in current_noise_type:
+                _, stddev = current_noise_type.split('_')
+                param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(stddev), desired_action_stddev=float(stddev))
+            elif 'normal' in current_noise_type:
+                _, stddev = current_noise_type.split('_')
+                action_noise = NormalActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
+            elif 'ou' in current_noise_type:
+                _, stddev = current_noise_type.split('_')
+                action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(nb_actions), sigma=float(stddev) * np.ones(nb_actions))
+            else:
+                raise RuntimeError('unknown noise type "{}"'.format(current_noise_type))
+
+    agent = DDPG(actor, critic, memory, observation_space_shape, action_space_shape,
+        gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
+        batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
+        actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
+        reward_scale=reward_scale, epsilon=epsilon)
+    logger.info('Using agent with the following configuration:')
+    logger.info(str(agent.__dict__.items()))
+
+    sess = U.get_session()
+    # Prepare everything.
+
+    agent.initialize(sess)
+    
+    if load_path:
+        logger.info('Loading Network from:', load_path)
+        agent.load(load_path)
+    
+    agent.reset()
+
+    return agent
